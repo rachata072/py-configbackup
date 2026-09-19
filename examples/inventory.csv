@@ -1,0 +1,3 @@
+hostname,ip,device_type,port,username,password_env,secret_env
+lab-r1,172.20.20.11,vyos,22,vyos-admin,CONFIGBACKUP_LAB_R1_PASSWORD,
+lab-r2,172.20.20.12,vyos,22,vyos-admin,CONFIGBACKUP_LAB_R2_PASSWORD,

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-configbackup"
+version = "0.1.0"
+description = "Netmiko-based network config backup tool with diffing and email change alerts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Rachata Wichakkhapan" }]
+dependencies = [
+    "netmiko>=4.3.0",
+]
+
+[project.scripts]
+configbackup = "configbackup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
