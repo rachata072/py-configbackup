@@ -141,7 +141,7 @@ pytest -v
 <!-- screenshots/02-pytest-passing.png -->
 ![pytest passing](screenshots/02-pytest-passing.png)
 
-## Part 6: Build the inventory file and set device passwords
+## Part 6: Build the inventory file
 
 Copy the example and edit it with the two management IPs from Part 3:
 
@@ -157,33 +157,58 @@ lab-r1,<lab-r1-management-ip>,vyos,22,admin,CONFIGBACKUP_LAB_R1_PASSWORD,
 lab-r2,<lab-r2-management-ip>,vyos,22,admin,CONFIGBACKUP_LAB_R2_PASSWORD,
 ```
 
-The CSV never holds the actual password, only the name of an environment variable that holds it. Set those now (matching whatever password I set in Part 4):
+The CSV never holds the actual password, only the name of an environment variable that holds it. Those variables get set in Part 7, all together in one place, on purpose, keep reading before running anything.
 
-```bash
-export CONFIGBACKUP_LAB_R1_PASSWORD='ChangeThisPassword123'
-export CONFIGBACKUP_LAB_R2_PASSWORD='ChangeThisPassword123'
-```
+## Part 7: Set up ALL credentials in one `.env` file
 
-These only last for the current shell session. For anything longer-term, I'm keeping a local `.env` file (copied from `.env.example`, which is git-ignored) and loading it with:
+This is the step that's easy to get half-done across two different terminal sessions, so everything the tool needs (both device passwords from Part 4 and the Gmail alert settings) goes in a single file here, loaded with a single command, every time.
 
-```bash
-export $(grep -v '^#' .env | xargs)
-```
+First, get a Gmail App Password if you haven't already:
 
-## Part 7: Set up the Gmail App Password for alerts
-
-1. On the Gmail account I want alerts sent from, turn on 2-Step Verification if it isn't already on (Google Account -> Security -> 2-Step Verification).
+1. On the Gmail account you want alerts sent from, turn on 2-Step Verification if it isn't already on (Google Account -> Security -> 2-Step Verification).
 2. Go to Google Account -> Security -> 2-Step Verification -> App passwords.
-3. Create a new App Password (any name, e.g. "configbackup"). Google generates a 16-character password. That's what goes in `CONFIGBACKUP_SMTP_APP_PASSWORD`, not my normal Gmail password.
+3. Create a new App Password (any name, e.g. "configbackup"). Google generates a 16-character password, shown only once. That's what goes below as `CONFIGBACKUP_SMTP_APP_PASSWORD`, not your normal Gmail password.
+
+Now create `.env` in the project folder (this file is git-ignored, it never gets committed):
 
 ```bash
-export CONFIGBACKUP_SMTP_HOST=smtp.gmail.com
-export CONFIGBACKUP_SMTP_PORT=587
-export CONFIGBACKUP_SMTP_USERNAME='youraddress@gmail.com'
-export CONFIGBACKUP_SMTP_APP_PASSWORD='xxxxxxxxxxxxxxxx'
-export CONFIGBACKUP_ALERT_FROM='youraddress@gmail.com'
-export CONFIGBACKUP_ALERT_TO='youraddress@gmail.com'
+cp .env.example .env
+nano .env
 ```
+
+Fill in all six values, your two VyOS device passwords from Part 4 AND your six Gmail settings, in this one file:
+
+```bash
+CONFIGBACKUP_LAB_R1_PASSWORD=the password you set on lab-r1 in Part 4
+CONFIGBACKUP_LAB_R2_PASSWORD=the password you set on lab-r2 in Part 4
+
+CONFIGBACKUP_SMTP_HOST=smtp.gmail.com
+CONFIGBACKUP_SMTP_PORT=587
+CONFIGBACKUP_SMTP_USERNAME=youraddress@gmail.com
+CONFIGBACKUP_SMTP_APP_PASSWORD=xxxxxxxxxxxxxxxx
+CONFIGBACKUP_ALERT_FROM=youraddress@gmail.com
+CONFIGBACKUP_ALERT_TO=youraddress@gmail.com
+```
+
+No quotes needed around the values in a `.env` file. If any password happens to contain a `#`, keep in mind a `#` starts a comment in this file format, so wrap that one value in quotes if that ever comes up.
+
+Load it into your current shell with `set -a` / `source` / `set +a`, not the `export $(... | xargs)` pattern, that older method breaks silently on any value containing a space, `#`, or `$`:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Do this every time you open a new terminal and want to run `configbackup`, environment variables never persist across terminal sessions on their own. Confirm everything loaded without printing the actual secrets:
+
+```bash
+for var in CONFIGBACKUP_LAB_R1_PASSWORD CONFIGBACKUP_LAB_R2_PASSWORD CONFIGBACKUP_SMTP_APP_PASSWORD; do
+  echo "$var: $(echo -n "${!var}" | wc -c) characters"
+done
+```
+
+Each should report a non-zero character count. `0` means that one didn't load, missing from `.env`, a typo in the variable name, or `.env` wasn't sourced in this shell.
 
 ## Part 8: Run the first backup (baseline)
 
@@ -237,6 +262,11 @@ diff backups/lab-r1/lab-r1_*.cfg
 
 Each device gets its own folder under `backups/`, and every run adds one more timestamped file. Nothing ever gets overwritten or deleted by the tool itself.
 
+**Screenshot 06:** the backup file listing and the raw `diff` between `lab-r1`'s two backups.
+
+<!-- screenshots/06.png -->
+![Backup file listing and raw diff output](screenshots/06.png)
+
 ## Troubleshooting
 
 **`NetmikoTimeoutException` / "connection timed out"**
@@ -246,7 +276,10 @@ The management IP is wrong, the container isn't up, or something on the host is 
 Either the username/password in the CSV don't match what was actually set in Part 4, or the `password_env` variable isn't exported in the current shell (`echo $CONFIGBACKUP_LAB_R1_PASSWORD` to check).
 
 **`show configuration commands` comes back empty or errors on VyOS**
-VyOS's operational-mode `show` commands sometimes need a `run` prefix depending on the exact session context. If the plain command in `backup.py`'s `RUNNING_CONFIG_COMMANDS` map for `"vyos"` doesn't return anything on this VyOS build, change it to `"run show configuration commands"` and re-test. I ran into version-dependent behavior with this exact command while researching VyOS automation, so this is worth checking against the actual VyOS version in use rather than assuming.
+Confirmed working as-is (no `run` prefix needed) against the VyOS rolling release used to build this lab, Netmiko's VyOS driver connects in operational mode by default, and the plain command returns the full config correctly. I'd flagged this as version-sensitive before actually testing it end to end; if a different VyOS build ever returns nothing, the fallback is changing `backup.py`'s `RUNNING_CONFIG_COMMANDS["vyos"]` to `"run show configuration commands"` and re-testing, but that wasn't needed here.
+
+**A stray line like `sudo: unable to resolve host <name>: System error` or `[?2004l` shows up inside a saved backup**
+This happened during real testing, `sudo` prints that hostname-resolution warning internally right after a `system host-name` change, and `[?2004l` is a terminal control sequence some shells emit, neither is part of the actual VyOS config. The current version of `backup.py` filters both patterns out automatically before saving or diffing (see `_strip_noise_lines`), so this shouldn't reappear, but if a different kind of terminal noise shows up on a different platform, add its pattern to `_NOISE_LINE_PATTERNS` in `backup.py` and a test encoding exactly what was observed, rather than guessing at every possible variant in advance.
 
 **Gmail alert fails with `SMTPAuthenticationError`**
 This almost always means an App Password wasn't used, or 2-Step Verification isn't turned on for the account (App Passwords require it). Double-check `CONFIGBACKUP_SMTP_APP_PASSWORD` is the 16-character App Password, not the regular account password.

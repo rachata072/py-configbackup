@@ -9,6 +9,8 @@ of a real router.
 
 from __future__ import annotations
 
+import re
+
 from netmiko import ConnectHandler
 from netmiko.exceptions import (
     NetmikoAuthenticationException,
@@ -44,6 +46,40 @@ DEFAULT_COMMAND = "show running-config"
 # than a fast, clear failure.
 CONNECT_TIMEOUT_SECONDS = 10
 READ_TIMEOUT_SECONDS = 30
+
+# Found while testing against a real VyOS lab, not something a mocked
+# test would ever surface: a device's own shell can leak lines into
+# an SSH session's output that have nothing to do with the actual
+# config. Two patterns showed up in practice:
+#   - "sudo: unable to resolve host <name>: System error", a
+#     diagnostic sudo prints when /etc/hosts doesn't (yet) match the
+#     device's current hostname, seen right after changing
+#     "system host-name" on VyOS.
+#   - "[?2004l" / "[?2004h", the bracketed-paste-mode toggle escape
+#     sequence some shells emit, which can end up as a bare line of
+#     text if the terminal-control characters around it get stripped
+#     but the visible characters don't.
+# Neither of these is part of the device's real configuration, and
+# leaving them in would mean every backup permanently "changes" the
+# moment one of them happens to appear, and a diff that's just noise
+# is exactly the kind of thing that trains people to stop reading
+# alerts. So they get filtered out before the text is ever saved or
+# diffed.
+_NOISE_LINE_PATTERNS = (
+    re.compile(r"^\s*sudo:\s.*$"),
+    re.compile(r"^\s*\x1b?\[\?2004[hl]\s*$"),
+)
+
+
+def _strip_noise_lines(text: str) -> str:
+    """Remove known non-config noise lines from captured command output."""
+    lines = text.splitlines(keepends=True)
+    cleaned = [
+        line
+        for line in lines
+        if not any(pattern.match(line.rstrip("\r\n")) for pattern in _NOISE_LINE_PATTERNS)
+    ]
+    return "".join(cleaned)
 
 
 def get_running_config_command(device_type: str) -> str:
@@ -91,4 +127,4 @@ def fetch_running_config(device: Device) -> str:
             f"{device.hostname} ({device.ip}): {exc.__class__.__name__}: {exc}"
         ) from exc
 
-    return config_text
+    return _strip_noise_lines(config_text)

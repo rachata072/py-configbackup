@@ -102,7 +102,7 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-All 42 tests run against a mocked Netmiko `ConnectHandler` and a mocked `smtplib.SMTP`, so they run in well under a second and never touch a real device or send a real email. That also means they run the same whether or not the lab from RUNBOOK.md happens to be up.
+All 46 tests run against a mocked Netmiko `ConnectHandler` and a mocked `smtplib.SMTP`, so they run in well under a second and never touch a real device or send a real email. That also means they run the same whether or not the lab from RUNBOOK.md happens to be up.
 
 ## Project layout
 
